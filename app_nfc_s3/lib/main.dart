@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 
 import 'nfc_counter_service.dart';
 
+enum _NfcAction { read, write }
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const NfcCounterApp());
@@ -42,26 +44,65 @@ class _CounterHomePageState extends State<CounterHomePage> {
   late final NfcCounterService _nfc = widget.service ?? NfcCounterService();
   int? _counter;
   bool _busy = false;
+  bool _readyToRemove = false;
+  _NfcAction? _activeAction;
   String _status = 'Listo para acercar el teléfono al NT3H2211';
+
+  void _signalNfcCompleted() {
+    HapticFeedback.heavyImpact();
+    SystemSound.play(SystemSoundType.alert);
+  }
+
+  void _onReadCompleted(int counter) {
+    if (!mounted) return;
+    setState(() {
+      _counter = counter;
+      _readyToRemove = true;
+      _status = 'Dato leído: contador=$counter. Retire el teléfono.';
+    });
+    _signalNfcCompleted();
+  }
+
+  void _onWriteCompleted(int counter) {
+    if (!mounted) return;
+    setState(() {
+      _counter = counter;
+      _readyToRemove = true;
+      _status = 'NDEF escrito: contador=$counter. Retire el teléfono.';
+    });
+    _signalNfcCompleted();
+  }
 
   Future<void> _readCounter() async {
     setState(() {
       _busy = true;
+      _readyToRemove = false;
+      _activeAction = _NfcAction.read;
       _status =
           'Acerque el teléfono, espere la lectura y luego retírelo de la antena…';
     });
     try {
-      final counter = await _nfc.readCounter();
+      final counter = await _nfc.readCounter(onRead: _onReadCompleted);
       if (!mounted) return;
       setState(() {
         _counter = counter;
-        _status = 'Lectura NFC completada';
+        _readyToRemove = false;
+        _status = 'Lectura NFC finalizada correctamente';
       });
     } catch (error) {
       if (!mounted) return;
-      setState(() => _status = error.toString());
+      setState(() {
+        _readyToRemove = false;
+        _status = error.toString();
+      });
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _readyToRemove = false;
+          _activeAction = null;
+        });
+      }
     }
   }
 
@@ -74,14 +115,17 @@ class _CounterHomePageState extends State<CounterHomePage> {
 
     setState(() {
       _busy = true;
+      _readyToRemove = false;
+      _activeAction = _NfcAction.write;
       _status =
           'Acerque el teléfono para escribir contador=$value y retírelo al terminar…';
     });
     try {
-      await _nfc.writeCounter(value);
+      await _nfc.writeCounter(value, onWritten: _onWriteCompleted);
       if (!mounted) return;
       setState(() {
         _counter = value;
+        _readyToRemove = false;
         _status = 'Valor enviado. El ESP32 está procesando el cambio.';
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -89,9 +133,18 @@ class _CounterHomePageState extends State<CounterHomePage> {
       );
     } catch (error) {
       if (!mounted) return;
-      setState(() => _status = error.toString());
+      setState(() {
+        _readyToRemove = false;
+        _status = error.toString();
+      });
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _readyToRemove = false;
+          _activeAction = null;
+        });
+      }
     }
   }
 
@@ -175,10 +228,30 @@ class _CounterHomePageState extends State<CounterHomePage> {
                         ),
                         const SizedBox(height: 28),
                         _PrimaryButton(
-                          label: _busy ? 'Esperando NFC…' : 'Leer NFC',
-                          icon: Icons.contactless_rounded,
-                          color: const Color(0xFFFFD51F),
+                          label: _readyToRemove
+                              ? 'Retire el teléfono'
+                              : _busy
+                              ? 'Esperando NFC…'
+                              : 'Leer NFC',
+                          icon: _readyToRemove
+                              ? Icons.check_circle_rounded
+                              : Icons.contactless_rounded,
+                          color: _readyToRemove
+                              ? const Color(0xFFB7FF2A)
+                              : const Color(0xFFFFD51F),
                           onPressed: _busy ? null : _readCounter,
+                        ),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 250),
+                          child: _readyToRemove
+                              ? Padding(
+                                  key: const ValueKey('nfc-success-banner'),
+                                  padding: const EdgeInsets.only(top: 16),
+                                  child: _NfcSuccessBanner(
+                                    action: _activeAction!,
+                                  ),
+                                )
+                              : const SizedBox.shrink(),
                         ),
                         const SizedBox(height: 24),
                         const Text(
@@ -194,6 +267,7 @@ class _CounterHomePageState extends State<CounterHomePage> {
                           counter: _counter,
                           status: _status,
                           busy: _busy,
+                          readyToRemove: _readyToRemove,
                         ),
                         const SizedBox(height: 22),
                         _PrimaryButton(
@@ -254,10 +328,12 @@ class _CounterCard extends StatelessWidget {
     required this.counter,
     required this.status,
     required this.busy,
+    required this.readyToRemove,
   });
   final int? counter;
   final String status;
   final bool busy;
+  final bool readyToRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -270,7 +346,9 @@ class _CounterCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: const Color(0xFFE8E1FF),
+          color: readyToRemove
+              ? const Color(0xFFDFFFAD)
+              : const Color(0xFFE8E1FF),
           border: Border.all(color: Colors.black, width: 2.5),
           borderRadius: BorderRadius.circular(16),
         ),
@@ -285,7 +363,10 @@ class _CounterCard extends StatelessWidget {
                   'Contador actual',
                   style: TextStyle(fontWeight: FontWeight.w800),
                 ),
-                if (busy) ...[
+                if (readyToRemove) ...[
+                  const Spacer(),
+                  const Icon(Icons.check_circle_rounded, size: 26),
+                ] else if (busy) ...[
                   const Spacer(),
                   const SizedBox.square(
                     dimension: 18,
@@ -307,7 +388,61 @@ class _CounterCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            Text(status, style: const TextStyle(fontSize: 13, height: 1.35)),
+            Text(
+              status,
+              style: TextStyle(
+                fontSize: readyToRemove ? 15 : 13,
+                height: 1.35,
+                fontWeight: readyToRemove ? FontWeight.w900 : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NfcSuccessBanner extends StatelessWidget {
+  const _NfcSuccessBanner({required this.action});
+
+  final _NfcAction action;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = action == _NfcAction.read
+        ? 'LECTURA COMPLETADA'
+        : 'ESCRITURA COMPLETADA';
+
+    return Semantics(
+      liveRegion: true,
+      label: '$title. Retire el teléfono de la antena NFC.',
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFB7FF2A),
+          border: Border.all(color: Colors.black, width: 2.5),
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: const [
+            BoxShadow(color: Colors.black, offset: Offset(5, 5)),
+          ],
+        ),
+        child: Column(
+          children: [
+            const Icon(Icons.check_circle_rounded, size: 34),
+            const SizedBox(height: 4),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 2),
+            const Text(
+              'RETIRE EL TELÉFONO DE LA ANTENA NFC',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
+            ),
           ],
         ),
       ),
@@ -348,8 +483,8 @@ class _PrimaryButton extends StatelessWidget {
         style: FilledButton.styleFrom(
           foregroundColor: Colors.black,
           backgroundColor: color,
-          disabledBackgroundColor: const Color(0xFFBDBDBD),
-          disabledForegroundColor: Colors.black54,
+          disabledBackgroundColor: color,
+          disabledForegroundColor: Colors.black,
           shape: RoundedRectangleBorder(
             side: const BorderSide(color: Colors.black, width: 2.5),
             borderRadius: BorderRadius.circular(12),

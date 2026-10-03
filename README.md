@@ -298,6 +298,10 @@ antena. Sólo cierra la sesión cuando detecta que la etiqueta fue retirada. Est
 evita que Android vuelva a descubrir inmediatamente el mismo NDEF y abra su
 pantalla del sistema **«Nueva etiqueta recolectada»**.
 
+En cuanto el NDEF queda leído y validado, antes de retirar el teléfono, la app
+muestra el valor, cambia la tarjeta a verde, presenta el aviso **LECTURA
+COMPLETADA - RETIRE EL TELÉFONO** y genera sonido más vibración adicional.
+
 ### Escritura desde Android
 
 ```text
@@ -315,6 +319,10 @@ Usuario introduce un valor
 La confirmación de Android significa que la escritura NDEF terminó. La
 persistencia definitiva ocurre después de retirar el teléfono, cuando el
 ESP32-S3 recupera el acceso a EEPROM y ejecuta `nvs_commit()`.
+
+La escritura también tiene confirmación inmediata: tarjeta verde, valor enviado,
+aviso **ESCRITURA COMPLETADA - RETIRE EL TELÉFONO**, sonido y vibración. La
+sesión NFC permanece activa hasta detectar la retirada.
 
 ## Organización del firmware
 

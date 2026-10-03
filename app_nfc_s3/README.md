@@ -12,6 +12,8 @@ Aplicación Flutter para Android que lee y escribe el contador del PoC ESP32-S3 
 - Escribe el nuevo valor como NDEF Text Record.
 - Mantiene activa la sesión NFC hasta retirar el teléfono, evitando que Android
   vuelva a abrir el visor del sistema «Nueva etiqueta recolectada».
+- Al completar una lectura o escritura, muestra inmediatamente una tarjeta verde
+  con el valor, la instrucción **RETIRE EL TELÉFONO**, sonido y vibración adicional.
 - Muestra estados y errores sin simular resultados.
 
 ## Interfaz

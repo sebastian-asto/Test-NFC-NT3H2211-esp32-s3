@@ -16,7 +16,7 @@ class NfcCounterException implements Exception {
 }
 
 class NfcCounterService {
-  static const Duration _sessionTimeout = Duration(seconds: 20);
+  static const Duration _sessionTimeout = Duration(seconds: 30);
 
   Future<void> _ensureAvailable() async {
     final availability = await NfcManager.instance.checkAvailability();
@@ -27,14 +27,18 @@ class NfcCounterService {
     }
   }
 
-  Future<int> readCounter() async {
+  Future<int> readCounter({void Function(int counter)? onRead}) async {
     await _ensureAvailable();
     final result = Completer<int>();
+    var handlingTag = false;
+    var acceptCallbacks = true;
 
     await NfcManager.instance.startSession(
       pollingOptions: const {NfcPollingOption.iso14443},
       noPlatformSoundsAndroid: false,
       onDiscovered: (tag) async {
+        if (handlingTag) return;
+        handlingTag = true;
         NdefAndroid? ndef;
         int? value;
         Object? operationError;
@@ -51,6 +55,7 @@ class NfcCounterService {
             throw const NfcCounterException('No se encontró un mensaje NDEF.');
           }
           value = _counterFromMessage(message);
+          if (acceptCallbacks) onRead?.call(value);
         } catch (error, stackTrace) {
           operationError = error;
           operationStackTrace = stackTrace;
@@ -72,6 +77,7 @@ class NfcCounterService {
     try {
       return await result.future.timeout(_sessionTimeout);
     } on TimeoutException {
+      acceptCallbacks = false;
       await _stopSessionQuietly();
       throw const NfcCounterException(
         'Tiempo agotado. Acerque el teléfono y retírelo después de la lectura.',
@@ -79,7 +85,10 @@ class NfcCounterService {
     }
   }
 
-  Future<void> writeCounter(int counter) async {
+  Future<void> writeCounter(
+    int counter, {
+    void Function(int counter)? onWritten,
+  }) async {
     await _ensureAvailable();
     if (counter < -2147483648 || counter > 2147483647) {
       throw const NfcCounterException(
@@ -89,11 +98,15 @@ class NfcCounterService {
 
     final result = Completer<void>();
     final message = _messageForCounter(counter);
+    var handlingTag = false;
+    var acceptCallbacks = true;
 
     await NfcManager.instance.startSession(
       pollingOptions: const {NfcPollingOption.iso14443},
       noPlatformSoundsAndroid: false,
       onDiscovered: (tag) async {
+        if (handlingTag) return;
+        handlingTag = true;
         NdefAndroid? ndef;
         Object? operationError;
         StackTrace? operationStackTrace;
@@ -115,6 +128,7 @@ class NfcCounterService {
             );
           }
           await ndef.writeNdefMessage(message);
+          if (acceptCallbacks) onWritten?.call(counter);
         } catch (error, stackTrace) {
           operationError = error;
           operationStackTrace = stackTrace;
@@ -136,6 +150,7 @@ class NfcCounterService {
     try {
       await result.future.timeout(_sessionTimeout);
     } on TimeoutException {
+      acceptCallbacks = false;
       await _stopSessionQuietly();
       throw const NfcCounterException(
         'Tiempo agotado. Acerque el teléfono y retírelo después de la escritura.',
